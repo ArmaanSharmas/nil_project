@@ -20,11 +20,6 @@ try:
     from src.valuation.features import PortalDemandSignal, OffCourtSignal
     from src.portal import PortalScenario, score_scenario
     from src.portal.monte_carlo import monte_carlo_decision
-    from src.contracts import (
-        ContractScenario, IncentiveTrigger, PlayerTier,
-        STRATEGY_MATRIX, DEPARTURE_PROB, WINS_BY_TIER,
-        analyze_contract, comparison_analysis,
-    )
     _IMPORTS_OK = True
 except Exception as _import_err:
     _IMPORTS_OK = False
@@ -778,336 +773,207 @@ with tab_contracts:
     }
 
     st.markdown(
-        '<p style="color:#6b7280;margin-top:-8px;">Model the financial and strategic '
-        'trade-offs across contract lengths, escalators, and performance incentives — '
-        'then see where the multi-year edge lives.</p>',
+        '<p style="color:#6b7280;margin-top:-8px;">NIL contract structure is one of the '
+        'few levers a mid-budget program can actually pull. The teams that figure out '
+        '<em>how</em> to structure deals — not just how much to spend — are the ones '
+        'that build durable rosters on constrained budgets.</p>',
         unsafe_allow_html=True,
     )
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Section 1: Configurator + Analysis ───────────────────────────────────
-    ctr_left, ctr_right = st.columns([1, 1], gap="large")
-
-    with ctr_left:
-        st.markdown("#### Contract Configurator")
-
-        TIER_OPTIONS = [t.value for t in PlayerTier]
-        ct_tier = st.selectbox("Player tier", TIER_OPTIONS, index=1)
-
-        ct_years = st.radio(
-            "Contract duration",
-            options=[1, 2, 3],
-            format_func=lambda x: f"{x}-Year",
-            horizontal=True,
-        )
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        ct_base = st.number_input(
-            "Base salary — Year 1 ($)",
-            min_value=0, max_value=5_000_000, value=800_000, step=25_000,
-        )
-        ct_esc = st.slider(
-            "Annual escalator (%)",
-            min_value=0.0, max_value=0.20, value=0.08, step=0.01,
-            format="%.0f%%",
-            help="Automatic salary increase built into the deal each year. "
-                 "8% is a common benchmark in multi-year NIL deals.",
-        )
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        use_incentives = st.checkbox("Add performance incentives")
-
-        triggers: list[IncentiveTrigger] = []
-        if use_incentives:
-            st.markdown(
-                '<div style="color:#6b7280;font-size:0.75rem;text-transform:uppercase;'
-                'letter-spacing:.07em;margin-bottom:6px;margin-top:4px;">Incentive Triggers</div>',
-                unsafe_allow_html=True,
-            )
-            for idx in range(3):
-                ic1, ic2, ic3 = st.columns([2.5, 1.3, 1.2])
-                with ic1:
-                    tname = st.text_input(
-                        f"Trigger {idx+1} name",
-                        placeholder=f"e.g. Avg 15+ PPG" if idx == 0 else ("All-Conference" if idx == 1 else "30+ min/game"),
-                        key=f"ct_tname_{idx}",
-                        label_visibility="collapsed",
-                    )
-                with ic2:
-                    tbonus = st.number_input(
-                        f"Bonus {idx+1} ($)",
-                        min_value=0, max_value=500_000, value=50_000, step=5_000,
-                        key=f"ct_tbonus_{idx}",
-                        label_visibility="collapsed",
-                    )
-                with ic3:
-                    tprob = st.slider(
-                        f"P(hit) {idx+1}",
-                        min_value=0.0, max_value=1.0, value=0.35, step=0.05,
-                        format="%.0f%%",
-                        key=f"ct_tprob_{idx}",
-                        label_visibility="collapsed",
-                    )
-                if tname:
-                    triggers.append(IncentiveTrigger(
-                        name=tname, bonus_usd=int(tbonus), hit_probability=tprob
-                    ))
-
-        dep_rate = DEPARTURE_PROB.get(ct_tier, 0.20)
-        st.markdown(
-            f'<div style="margin-top:14px;padding:10px 14px;background:#0d1625;'
-            f'border-radius:10px;border:1px solid #1f2937;">'
-            f'<span style="color:#6b7280;font-size:0.8rem;">Annual departure risk for '
-            f'<b style="color:#9aa5b4;">{ct_tier}</b>: '
-            f'<span style="color:#f59e0b;font-weight:700;">{dep_rate:.0%}</span>'
-            f' &nbsp;·&nbsp; Wins/yr: '
-            f'<span style="color:#FFB300;font-weight:700;">{WINS_BY_TIER.get(ct_tier, 1.0):.1f}</span>'
-            f'</span></div>',
-            unsafe_allow_html=True,
-        )
-
-    with ctr_right:
-        try:
-            scenario = ContractScenario(
-                player_tier=ct_tier,
-                contract_years=ct_years,
-                base_salary_yr1=int(ct_base),
-                escalator_pct=ct_esc,
-                incentive_triggers=triggers,
-            )
-            res = analyze_contract(scenario)
-
-            # ── Key metrics ───────────────────────────────────────────────────
-            st.markdown("#### Analysis")
-            am1, am2, am3 = st.columns(3)
-            am1.metric("Guaranteed Total", f"${res.guaranteed_total:,.0f}")
-            am2.metric(
-                "Risk-Adj. NPV",
-                f"${res.risk_adjusted_npv:,.0f}",
-                delta=f"${res.guaranteed_total - res.risk_adjusted_npv:,.0f} departure discount",
-                delta_color="inverse",
-            )
-            am3.metric("Cap Efficiency", f"{res.cap_efficiency:.2f} W/$M")
-
-            if res.incentive_ev > 0:
-                st.markdown(
-                    f'<div style="font-size:0.82rem;color:#9aa5b4;margin-top:4px;">'
-                    f'Incentive EV: {gold(f"${res.incentive_ev:,}")} &nbsp;·&nbsp; '
-                    f'Expected total cost: {gold(f"${res.expected_total_cost:,}")}'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-
-            st.markdown("<br>", unsafe_allow_html=True)
-
-            # ── Year-by-year cost chart ────────────────────────────────────────
-            st.markdown(
-                '<div style="color:#6b7280;font-size:0.75rem;text-transform:uppercase;'
-                'letter-spacing:.07em;margin-bottom:4px;">Year-by-Year Cost Breakdown</div>',
-                unsafe_allow_html=True,
-            )
-            yrs_labels = [f"Year {b.year}" for b in res.year_breakdowns]
-            guaranteed_vals = [b.salary for b in res.year_breakdowns]
-            risk_adj_vals   = [b.risk_adjusted_cost for b in res.year_breakdowns]
-            ret_labels = [f"{b.p_retention:.0%} retention" for b in res.year_breakdowns]
-
-            yr_fig = go.Figure()
-            yr_fig.add_trace(go.Bar(
-                name="Guaranteed Salary",
-                x=yrs_labels,
-                y=guaranteed_vals,
-                marker_color="#2774AE",
-                text=[f"${v:,.0f}" for v in guaranteed_vals],
-                textposition="outside",
-                textfont=dict(color="#9aa5b4", size=10),
-                hovertemplate="<b>%{x}</b><br>Guaranteed: $%{y:,.0f}<extra></extra>",
-            ))
-            yr_fig.add_trace(go.Bar(
-                name="Risk-Adjusted Cost",
-                x=yrs_labels,
-                y=risk_adj_vals,
-                marker_color="#FFB300",
-                text=ret_labels,
-                textposition="outside",
-                textfont=dict(color="#9aa5b4", size=10),
-                hovertemplate="<b>%{x}</b><br>Risk-adj: $%{y:,.0f}<extra></extra>",
-            ))
-            yr_fig.update_layout(
-                **CHART_DEFAULTS,
-                height=220,
-                barmode="group",
-                margin=dict(l=0, r=10, t=8, b=0),
-                legend=dict(
-                    orientation="h", yanchor="bottom", y=1.02,
-                    font=dict(color="#9aa5b4", size=11),
-                ),
-                yaxis=dict(
-                    showgrid=True, gridcolor="#1f2937",
-                    tickfont=dict(color="#9aa5b4", size=10),
-                    tickprefix="$",
-                ),
-                xaxis=dict(tickfont=dict(color="#9aa5b4")),
-                bargap=0.25,
-            )
-            st.plotly_chart(yr_fig, use_container_width=True, config={"displayModeBar": False})
-
-            # ── Recommendation badge ──────────────────────────────────────────
-            rc = REC_COLORS.get(res.recommendation, "#6b7280")
-            st.markdown(
-                f'<div style="text-align:center;padding:0.6rem 0;">'
-                f'<div style="display:inline-block;background:{rc}22;border:2px solid {rc};'
-                f'border-radius:14px;padding:0.45rem 2rem;">'
-                f'<span style="color:{rc};font-size:1.5rem;font-weight:800;">'
-                f'{res.recommendation}</span></div>'
-                f'<div style="color:#6b7280;font-size:0.78rem;margin-top:6px;">'
-                f'{ct_years}-Year deal · {ct_tier} · '
-                f'{res.expected_wins:.1f} expected wins</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-
-            # ── Rationale card ────────────────────────────────────────────────
-            card(
-                f'<div style="color:#6b7280;font-size:0.72rem;text-transform:uppercase;'
-                f'letter-spacing:.07em;margin-bottom:6px;">Strategic Rationale</div>'
-                f'<div style="color:#9aa5b4;line-height:1.7;font-size:0.88rem;">{res.rationale}</div>',
-                extra_style=f"border-left:3px solid {rc};",
-            )
-
-        except Exception as e:
-            st.error(f"Contract analysis error: {e}")
+    # ── Opening thesis ────────────────────────────────────────────────────────
+    card(
+        '<p style="margin:0;font-size:1rem;line-height:1.8;color:#9aa5b4;">'
+        '<b style="color:#ffffff;">Most programs treat every NIL deal the same way: '
+        'one year, flat rate, repeat annually.</b> '
+        'That default works fine when you have unlimited budget — you can just outbid '
+        'whoever poaches your players. But at $6.2M, you can\'t afford to re-sign '
+        'a developed rotation player at open-market prices every summer. '
+        'The edge is in <b style="color:#FFB300;">contract structure</b>: '
+        'locking in the right players at the right duration before the market prices '
+        'them away from you.'
+        '</p>',
+        extra_style="border-left:3px solid #2774AE;",
+    )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Section 2: 1yr / 2yr / 3yr Side-by-Side ──────────────────────────────
-    st.markdown("#### Duration Comparison — Same Player, Three Structures")
+    # ── Section 1: The Three Contract Structures ──────────────────────────────
+    st.markdown("#### The Three Contract Structures")
     st.markdown(
-        f'<p style="color:#6b7280;font-size:0.85rem;margin-top:-6px;">'
-        f'Showing {ct_tier} at ${ct_base:,}/yr base with {ct_esc:.0%} escalator.</p>',
+        '<p style="color:#6b7280;font-size:0.85rem;margin-top:-6px;">'
+        'Each structure carries a different risk profile and strategic purpose. '
+        'The best programs mix all three depending on player tier and roster stage.</p>',
         unsafe_allow_html=True,
     )
 
-    try:
-        comps = comparison_analysis(ct_tier, int(ct_base), ct_esc)
+    cs1, cs2, cs3 = st.columns(3, gap="medium")
 
-        comp_cols = st.columns(3)
-        for col, ca in zip(comp_cols, comps):
-            rc2 = REC_COLORS.get(ca.recommendation, "#6b7280")
-            col.markdown(
-                f'<div style="background:#111827;border:1px solid {rc2}44;border-radius:14px;'
-                f'padding:1.2rem;text-align:center;">'
-                f'<div style="color:#6b7280;font-size:0.72rem;text-transform:uppercase;'
-                f'letter-spacing:.07em;">{ca.years}-Year Deal</div>'
-                f'<div style="color:#FFB300;font-size:1.5rem;font-weight:800;margin:6px 0;">'
-                f'${ca.guaranteed_total:,.0f}</div>'
-                f'<div style="color:#6b7280;font-size:0.78rem;margin-bottom:10px;">'
-                f'guaranteed total</div>'
-                f'<div style="display:flex;justify-content:space-around;margin-bottom:10px;">'
-                f'<div><div style="color:#9aa5b4;font-size:0.75rem;">Risk-Adj NPV</div>'
-                f'<div style="color:#ffffff;font-weight:600;">${ca.risk_adjusted_npv:,.0f}</div></div>'
-                f'<div><div style="color:#9aa5b4;font-size:0.75rem;">Exp. Wins</div>'
-                f'<div style="color:#ffffff;font-weight:600;">{ca.expected_wins:.1f}</div></div>'
-                f'<div><div style="color:#9aa5b4;font-size:0.75rem;">W/$1M</div>'
-                f'<div style="color:#ffffff;font-weight:600;">{ca.cap_efficiency:.2f}</div></div>'
-                f'</div>'
-                f'<div style="background:{rc2}22;border:1px solid {rc2};border-radius:8px;'
-                f'padding:4px 0;color:{rc2};font-weight:700;font-size:0.85rem;">'
-                f'{ca.recommendation}</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        # Comparison bar chart: guaranteed vs risk-adjusted NPV
-        comp_labels = ["1-Year", "2-Year", "3-Year"]
-        guar_vals   = [c.guaranteed_total for c in comps]
-        ra_vals     = [c.risk_adjusted_npv for c in comps]
-        eff_vals    = [c.cap_efficiency for c in comps]
-
-        cmp_fig = go.Figure()
-        cmp_fig.add_trace(go.Bar(
-            name="Guaranteed Commitment",
-            x=comp_labels,
-            y=guar_vals,
-            marker_color="#2774AE",
-            text=[f"${v:,.0f}" for v in guar_vals],
-            textposition="outside",
-            textfont=dict(color="#9aa5b4", size=11),
-        ))
-        cmp_fig.add_trace(go.Bar(
-            name="Risk-Adjusted NPV",
-            x=comp_labels,
-            y=ra_vals,
-            marker_color="#FFB300",
-            text=[f"${v:,.0f}" for v in ra_vals],
-            textposition="outside",
-            textfont=dict(color="#9aa5b4", size=11),
-        ))
-        cmp_fig.update_layout(
-            **CHART_DEFAULTS,
-            height=280,
-            barmode="group",
-            margin=dict(l=0, r=10, t=8, b=0),
-            legend=dict(
-                orientation="h", yanchor="bottom", y=1.02,
-                font=dict(color="#9aa5b4", size=11),
-            ),
-            yaxis=dict(
-                showgrid=True, gridcolor="#1f2937",
-                tickfont=dict(color="#9aa5b4"),
-                tickprefix="$",
-            ),
-            xaxis=dict(tickfont=dict(color="#9aa5b4", size=13)),
-            bargap=0.3,
-        )
-        st.plotly_chart(cmp_fig, use_container_width=True, config={"displayModeBar": False})
-
-        # Cap efficiency line chart
-        eff_fig = go.Figure(go.Scatter(
-            x=comp_labels,
-            y=eff_vals,
-            mode="lines+markers+text",
-            line=dict(color="#10b981", width=2),
-            marker=dict(color="#10b981", size=10),
-            text=[f"{v:.2f} W/$M" for v in eff_vals],
-            textposition="top center",
-            textfont=dict(color="#9aa5b4", size=11),
-            hovertemplate="%{x}: %{y:.2f} wins/$1M<extra></extra>",
-        ))
-        eff_fig.update_layout(
-            **CHART_DEFAULTS,
-            height=160,
-            title=dict(text="Cap Efficiency (Wins per $1M Risk-Adjusted)", font=dict(color="#6b7280", size=11), x=0),
-            margin=dict(l=0, r=10, t=30, b=0),
-            yaxis=dict(showgrid=True, gridcolor="#1f2937", tickfont=dict(color="#9aa5b4"), title=None),
-            xaxis=dict(tickfont=dict(color="#9aa5b4")),
-        )
-        st.plotly_chart(eff_fig, use_container_width=True, config={"displayModeBar": False})
-
-    except Exception as e:
-        st.error(f"Comparison error: {e}")
+    cs1.markdown(
+        '<div style="background:#111827;border:1px solid #1f2937;border-radius:14px;'
+        'padding:1.4rem;height:100%;">'
+        '<div style="color:#2774AE;font-size:0.72rem;text-transform:uppercase;'
+        'letter-spacing:.07em;margin-bottom:10px;">Flat One-Year Deal</div>'
+        '<div style="color:#ffffff;font-size:1rem;font-weight:700;margin-bottom:10px;">'
+        'Maximum Flexibility</div>'
+        '<div style="color:#9aa5b4;font-size:0.85rem;line-height:1.75;">'
+        'The current default for most programs. Player gets paid a set amount for one season '
+        'with no future commitment on either side. Simple to negotiate, easy to budget, '
+        'and leaves full optionality for both parties going into the next portal window.'
+        '<br><br>'
+        '<b style="color:#fff;">Best for:</b> Stars with uncertain NBA timelines, '
+        'senior-year contributors, and portal additions you haven\'t fully evaluated yet.'
+        '<br><br>'
+        '<b style="color:#f59e0b;">The risk:</b> Every offseason becomes a re-signing '
+        'auction. Developmental players you invested in get re-priced at their new '
+        'market rate — which you just helped create.'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
+    cs2.markdown(
+        '<div style="background:#111827;border:1px solid #1f2937;border-radius:14px;'
+        'padding:1.4rem;height:100%;">'
+        '<div style="color:#FFB300;font-size:0.72rem;text-transform:uppercase;'
+        'letter-spacing:.07em;margin-bottom:10px;">Multi-Year with Escalators</div>'
+        '<div style="color:#ffffff;font-size:1rem;font-weight:700;margin-bottom:10px;">'
+        'The Continuity Play</div>'
+        '<div style="color:#9aa5b4;font-size:0.85rem;line-height:1.75;">'
+        'Lock in a player for 2–3 years with a guaranteed base that steps up annually '
+        '(typically 8–12% per year). The player gets security and a pay raise; '
+        'you get a known cost and roster continuity. Both sides are betting on '
+        'development — just in opposite directions.'
+        '<br><br>'
+        '<b style="color:#fff;">Best for:</b> Solid starters you want to build around, '
+        'and developmental players before they break out. The earlier you sign, '
+        'the bigger the discount versus future open-market rates.'
+        '<br><br>'
+        '<b style="color:#f59e0b;">The risk:</b> A player who underperforms or '
+        'gets injured becomes a cap anchor. Duration creates optionality for them, '
+        'not for you — they can still leave; you still owe the money.'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
+    cs3.markdown(
+        '<div style="background:#111827;border:1px solid #1f2937;border-radius:14px;'
+        'padding:1.4rem;height:100%;">'
+        '<div style="color:#10b981;font-size:0.72rem;text-transform:uppercase;'
+        'letter-spacing:.07em;margin-bottom:10px;">Incentive-Laden</div>'
+        '<div style="color:#ffffff;font-size:1rem;font-weight:700;margin-bottom:10px;">'
+        'Shared Upside</div>'
+        '<div style="color:#9aa5b4;font-size:0.85rem;line-height:1.75;">'
+        'Lower guaranteed base paired with performance bonuses: stat thresholds, '
+        'minutes floors, All-Conference honors, tournament milestones. '
+        'Aligns the player\'s financial incentive with the outcomes you actually need. '
+        'Defers cost to the seasons when production — and usually revenue — are highest.'
+        '<br><br>'
+        '<b style="color:#fff;">Best for:</b> Players you believe in but can\'t fully '
+        'value yet, role players whose impact is hard to isolate, and any deal where '
+        'you want to share the upside risk rather than absorb it entirely.'
+        '<br><br>'
+        '<b style="color:#f59e0b;">The risk:</b> Players and agents increasingly '
+        'prefer guaranteed money. A heavily incentive-laden offer may lose a bidding '
+        'war to a smaller-but-certain flat deal from a rival program.'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Section 3: Strategic Matrix ───────────────────────────────────────────
+    # ── Section 2: The Multi-Year Edge ────────────────────────────────────────
+    st.markdown("#### The Multi-Year Edge")
+    st.markdown(
+        '<p style="color:#6b7280;font-size:0.85rem;margin-top:-6px;">'
+        'Where the real structural advantage lives — and where it becomes a trap.</p>',
+        unsafe_allow_html=True,
+    )
+
+    me1, me2 = st.columns([1, 1], gap="large")
+
+    with me1:
+        card(
+            '<div style="color:#10b981;font-size:0.72rem;text-transform:uppercase;'
+            'letter-spacing:.07em;margin-bottom:10px;">The Developmental Flywheel</div>'
+            '<p style="color:#9aa5b4;line-height:1.8;margin:0 0 12px 0;">'
+            'The highest-leverage multi-year play is locking in <b style="color:#fff;">'
+            'developmental players before they break out</b>. A raw freshman or '
+            'sophomore who signs a 3-year deal at $100–130K/yr gives the program '
+            'cost certainty through their peak eligibility years. '
+            'If they develop into a rotation contributor or starter — which good '
+            'recruiting and development makes increasingly likely — you\'ve captured '
+            'that production at a fraction of the open-market re-signing price.'
+            '</p>'
+            '<p style="color:#9aa5b4;line-height:1.8;margin:0;">'
+            'The asymmetry is what makes this worth doing: '
+            '<b style="color:#FFB300;">downside is capped</b> (you paid $130K for '
+            'a player who didn\'t develop — not catastrophic at that price), while '
+            '<b style="color:#FFB300;">upside is uncapped</b> (you locked in a '
+            'future $400K rotation player at $130K, saving three years of re-signing '
+            'costs and preventing a rival from poaching them the moment they show promise). '
+            'This is the Flywheel archetype: invest in development, own the output.'
+            '</p>',
+            extra_style="border-left:3px solid #10b981;",
+        )
+
+    with me2:
+        card(
+            '<div style="color:#ef4444;font-size:0.72rem;text-transform:uppercase;'
+            'letter-spacing:.07em;margin-bottom:10px;">The Star Contract Trap</div>'
+            '<p style="color:#9aa5b4;line-height:1.8;margin:0 0 12px 0;">'
+            'Multi-year logic inverts completely when applied to stars. '
+            'Elite players — lottery-track talent, All-Conference performers — '
+            'carry a much higher annual departure probability: '
+            '<b style="color:#fff;">NBA draft decisions, bigger offers from bluebloods, '
+            'transfer portal noise</b>. Roughly half of star-level NIL players '
+            'at mid-budget programs leave within two years, whether by going pro '
+            'or chasing a larger deal elsewhere.'
+            '</p>'
+            '<p style="color:#9aa5b4;line-height:1.8;margin:0;">'
+            'A 3-year commitment to a star at $1.8–2.2M/yr means you could be '
+            'paying out $5–6M in guaranteed money for a player who is gone '
+            'after Year 1. The cap anchor '
+            '<b style="color:#FFB300;">doesn\'t just hurt the current budget — '
+            'it kills your ability to reload through the portal</b> '
+            'when you need it most. '
+            'Short deals on stars protect flexibility. '
+            'Their leverage is in their production; yours is in the option to reallocate.'
+            '</p>',
+            extra_style="border-left:3px solid #ef4444;",
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Section 3: Strategy Matrix ────────────────────────────────────────────
     st.markdown("#### Contract Strategy Matrix")
     st.markdown(
         '<p style="color:#6b7280;font-size:0.85rem;margin-top:-6px;">'
-        'Color-coded recommendation across every tier × duration combination. '
-        'Green = structural edge. Red = cap risk not worth it.</p>',
+        'Recommended contract structure by player tier and duration. '
+        'Green = structural edge. Red = cap risk outweighs the benefit.</p>',
         unsafe_allow_html=True,
     )
 
-    tiers_order   = ["Star", "Solid Starter", "Rotation", "Developmental"]
-    durations     = [1, 2, 3]
-    dur_labels    = ["1-Year", "2-Year", "3-Year"]
+    _MATRIX = [
+        ("Star",          1, "Good",        "Stars carry high departure risk. Short deals protect cap flexibility if they leave or go pro."),
+        ("Star",          2, "Situational",  "Works when NBA trajectory is confirmed 2+ years out. Adds security but limits future reallocation."),
+        ("Star",          3, "Avoid",        "3-year commitments risk locking up $5–6M for a player who may leave after Year 1."),
+        ("Solid Starter", 1, "Good",         "Maintains flexibility but risks losing them to a bigger offer when the portal reopens."),
+        ("Solid Starter", 2, "Ideal",        "The sweet spot. Locks in a known contributor below Year-2 open-market rates with manageable cap exposure."),
+        ("Solid Starter", 3, "Situational",  "Makes sense when eligibility and system fit are both proven. Ensures continuity over the rebuild cycle."),
+        ("Rotation",      1, "Situational",  "Low cap risk but leaves the slot vulnerable. Good bridge while developmental players mature."),
+        ("Rotation",      2, "Good",         "Depth stability at low AAV. Rotation players rarely outpace their salary in 2 years."),
+        ("Rotation",      3, "Avoid",        "Cap locked at 15–25 min/game production. Kills flexibility to upgrade or reload mid-cycle."),
+        ("Developmental", 1, "Situational",  "Leaves developmental players poachable once they show promise. Acceptable only under budget pressure."),
+        ("Developmental", 2, "Good",         "Locks in raw talent before they break out. If 50%+ develop into rotation contributors, NPV beats annual re-signing."),
+        ("Developmental", 3, "Ideal",        "The Flywheel strategy. Lock in at $90–150K/yr. Low downside, high upside if development hits."),
+    ]
+
+    tiers_order = ["Star", "Solid Starter", "Rotation", "Developmental"]
+    dur_labels  = ["1-Year", "2-Year", "3-Year"]
 
     matrix_html = (
         '<table style="width:100%;border-collapse:collapse;margin-top:8px;">'
         '<thead><tr style="border-bottom:2px solid #1f2937;">'
         '<th style="padding:10px 14px;text-align:left;color:#6b7280;font-size:0.75rem;'
-        'text-transform:uppercase;letter-spacing:.07em;width:22%;">Player Tier</th>'
+        'text-transform:uppercase;letter-spacing:.07em;width:18%;">Player Tier</th>'
     )
     for dl in dur_labels:
         matrix_html += (
@@ -1120,21 +986,21 @@ with tab_contracts:
         row_bg = "#0d1625" if i % 2 == 0 else "transparent"
         matrix_html += f'<tr style="background:{row_bg};border-bottom:1px solid #1a2535;">'
         matrix_html += (
-            f'<td style="padding:12px 14px;color:#e2e8f0;font-weight:600;'
-            f'font-size:0.88rem;">{tier}</td>'
+            f'<td style="padding:12px 14px;color:#e2e8f0;font-weight:600;font-size:0.88rem;">'
+            f'{tier}</td>'
         )
-        for dur in durations:
-            rec, rationale = STRATEGY_MATRIX.get((tier, dur), ("Situational", ""))
+        for dur in [1, 2, 3]:
+            row = next((r for r in _MATRIX if r[0] == tier and r[1] == dur), None)
+            rec = row[2] if row else "Situational"
+            rationale = row[3] if row else ""
             rc = REC_COLORS.get(rec, "#6b7280")
-            # Short excerpt of rationale (first sentence)
-            short = rationale.split(".")[0] + "." if "." in rationale else rationale[:80]
             matrix_html += (
-                f'<td style="padding:12px 14px;text-align:center;">'
+                f'<td style="padding:12px 14px;text-align:center;vertical-align:top;">'
                 f'<div style="display:inline-block;background:{rc}22;border:1px solid {rc};'
                 f'border-radius:8px;padding:3px 14px;color:{rc};font-weight:700;'
-                f'font-size:0.82rem;margin-bottom:4px;">{rec}</div>'
-                f'<div style="color:#6b7280;font-size:0.75rem;line-height:1.4;'
-                f'max-width:180px;margin:0 auto;">{short}</div>'
+                f'font-size:0.82rem;margin-bottom:6px;">{rec}</div>'
+                f'<div style="color:#6b7280;font-size:0.78rem;line-height:1.5;'
+                f'max-width:200px;margin:0 auto;">{rationale}</div>'
                 f'</td>'
             )
         matrix_html += "</tr>"
@@ -1143,65 +1009,134 @@ with tab_contracts:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Section 4: Incentive Structure Primer ────────────────────────────────
+    # ── Section 4: Incentive Design Principles ────────────────────────────────
     st.markdown("#### Incentive Structure Design")
-    inc1, inc2, inc3 = st.columns(3)
+    st.markdown(
+        '<p style="color:#6b7280;font-size:0.85rem;margin-top:-6px;">'
+        'Three bonus structures worth understanding — each with a different strategic purpose.</p>',
+        unsafe_allow_html=True,
+    )
+
+    inc1, inc2, inc3 = st.columns(3, gap="medium")
 
     inc1.markdown(
-        '<div style="background:#111827;border:1px solid #1f2937;border-radius:14px;padding:1.2rem;">'
-        '<div style="color:#10b981;font-size:0.75rem;text-transform:uppercase;'
-        'letter-spacing:.07em;margin-bottom:8px;">Performance Triggers</div>'
-        '<div style="color:#9aa5b4;font-size:0.85rem;line-height:1.7;">'
-        'Tie bonuses to <b style="color:#fff;">individual stats</b>: PPG thresholds, '
-        'rebounding averages, assists, or minutes played. These reward what you can '
-        'directly measure and reduce moral hazard. Best for stars and solid starters '
-        'where production is trackable.'
+        '<div style="background:#111827;border:1px solid #1f2937;border-radius:14px;padding:1.4rem;">'
+        '<div style="color:#10b981;font-size:0.72rem;text-transform:uppercase;'
+        'letter-spacing:.07em;margin-bottom:10px;">Performance Triggers</div>'
+        '<div style="color:#ffffff;font-size:0.95rem;font-weight:700;margin-bottom:8px;">'
+        'Stat-Based Bonuses</div>'
+        '<div style="color:#9aa5b4;font-size:0.85rem;line-height:1.75;">'
+        'Tie bonuses to individual statistical thresholds: PPG floors, '
+        'rebounding averages, assist ratios, or minutes played minimums. '
+        'These reward what you can directly measure, reduce moral hazard, '
+        'and tie additional cost to the outcomes that actually move the needle.'
+        '<br><br>'
+        'Examples: <b style="color:#fff;">+$50K if avg 15+ PPG</b>, '
+        '<b style="color:#fff;">+$25K if 30+ min/game in conference play</b>. '
+        'Best for stars and solid starters where production is trackable and meaningful.'
         '</div></div>',
         unsafe_allow_html=True,
     )
     inc2.markdown(
-        '<div style="background:#111827;border:1px solid #1f2937;border-radius:14px;padding:1.2rem;">'
-        '<div style="color:#2774AE;font-size:0.75rem;text-transform:uppercase;'
-        'letter-spacing:.07em;margin-bottom:8px;">Team Outcome Bonuses</div>'
-        '<div style="color:#9aa5b4;font-size:0.85rem;line-height:1.7;">'
-        'Link bonuses to <b style="color:#fff;">wins or tournament advancement</b>: '
-        'e.g. +$50K if team reaches Sweet 16. Aligns incentives with program goals '
-        'and defers cost to the seasons you can most afford it. Works well for '
-        'role players whose value is hard to isolate individually.'
+        '<div style="background:#111827;border:1px solid #1f2937;border-radius:14px;padding:1.4rem;">'
+        '<div style="color:#2774AE;font-size:0.72rem;text-transform:uppercase;'
+        'letter-spacing:.07em;margin-bottom:10px;">Team Outcome Bonuses</div>'
+        '<div style="color:#ffffff;font-size:0.95rem;font-weight:700;margin-bottom:8px;">'
+        'Win-Contingent Pay</div>'
+        '<div style="color:#9aa5b4;font-size:0.85rem;line-height:1.75;">'
+        'Link bonuses to wins, conference titles, or tournament advancement milestones. '
+        'A program that reaches the Sweet 16 has both proven the investment worked '
+        'and generated additional revenue — making the bonus genuinely affordable '
+        'at the moment it\'s owed.'
+        '<br><br>'
+        'Examples: <b style="color:#fff;">+$40K for NCAA Tournament appearance</b>, '
+        '<b style="color:#fff;">+$75K for Sweet 16</b>. '
+        'Works especially well for role players whose individual stats don\'t capture '
+        'their actual contribution to the team.'
         '</div></div>',
         unsafe_allow_html=True,
     )
     inc3.markdown(
-        '<div style="background:#111827;border:1px solid #1f2937;border-radius:14px;padding:1.2rem;">'
-        '<div style="color:#f59e0b;font-size:0.75rem;text-transform:uppercase;'
-        'letter-spacing:.07em;margin-bottom:8px;">Availability Guarantees</div>'
-        '<div style="color:#9aa5b4;font-size:0.85rem;line-height:1.7;">'
-        'Tie partial payment to <b style="color:#fff;">games played minimums</b> '
-        '(e.g. 80% of games). Protects against injury writeoffs while giving players '
-        'upside for staying healthy. Reduces total risk on multi-year deals for '
-        'development-tier players whose bodies are still adapting to the college game.'
+        '<div style="background:#111827;border:1px solid #1f2937;border-radius:14px;padding:1.4rem;">'
+        '<div style="color:#f59e0b;font-size:0.72rem;text-transform:uppercase;'
+        'letter-spacing:.07em;margin-bottom:10px;">Availability Clauses</div>'
+        '<div style="color:#ffffff;font-size:0.95rem;font-weight:700;margin-bottom:8px;">'
+        'Games-Played Minimums</div>'
+        '<div style="color:#9aa5b4;font-size:0.85rem;line-height:1.75;">'
+        'Tie a portion of the deal to games played (e.g. full payment requires '
+        'appearing in 80%+ of games). Protects against injury writeoffs on '
+        'multi-year deals, and removes the perverse incentive for players '
+        'to coast once their money is guaranteed.'
+        '<br><br>'
+        'Most relevant for <b style="color:#fff;">developmental and rotation players</b> '
+        'on longer deals, where availability is as important as the production ceiling — '
+        'you need them in the gym and on the floor, not on the medical table.'
         '</div></div>',
         unsafe_allow_html=True,
     )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
+    # ── Section 5: Key Principles ─────────────────────────────────────────────
+    st.markdown("#### Key Principles")
+
     card(
-        '<div style="color:#6b7280;font-size:0.75rem;text-transform:uppercase;'
-        'letter-spacing:.07em;margin-bottom:10px;">The Multi-Year Edge — Key Principle</div>'
-        '<p style="color:#9aa5b4;line-height:1.8;margin:0;">'
-        'Teams that <b style="color:#fff;">lock in developmental players early</b> — before '
-        'breakout — capture the largest NPV advantage. A 3-year deal at $120K/yr for a '
-        'developmental player who becomes a rotation contributor in Year 2 is worth '
-        '<b style="color:#FFB300;">$400–600K in avoided market-rate re-signing costs</b>. '
-        'The asymmetry is stark: the downside (paying $120K for a player who doesn\'t develop) '
-        'is capped, while the upside (locking in a $350K+ rotation player at $120K) '
-        'is program-defining. '
-        '<b style="color:#ffffff;">Stars are the opposite</b> — short deals protect against '
-        'the 45% annual departure probability and prevent cap anchoring on a player '
-        'who may leave before Year 2 starts.'
-        '</p>',
-        extra_style="border-left:3px solid #10b981;",
+        '<div style="color:#6b7280;font-size:0.72rem;text-transform:uppercase;'
+        'letter-spacing:.07em;margin-bottom:14px;">Strategic Takeaways</div>'
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 28px;">'
+
+        '<div style="color:#9aa5b4;font-size:0.88rem;line-height:1.7;padding-left:14px;'
+        'border-left:2px solid #2774AE;">'
+        '<b style="color:#fff;">Lock up developmental players early.</b> '
+        'Pre-breakout multi-year deals are the highest-ROI move available to a '
+        'mid-budget program. The cost of being wrong is small; the cost of not '
+        'doing it is losing your investment to a rival.'
+        '</div>'
+
+        '<div style="color:#9aa5b4;font-size:0.88rem;line-height:1.7;padding-left:14px;'
+        'border-left:2px solid #FFB300;">'
+        '<b style="color:#fff;">Keep stars on short deals.</b> '
+        'The departure risk at the top of the roster is real. '
+        'One-year deals preserve the cap flexibility to reload — '
+        'which matters more than trying to retain someone who may go pro regardless.'
+        '</div>'
+
+        '<div style="color:#9aa5b4;font-size:0.88rem;line-height:1.7;padding-left:14px;'
+        'border-left:2px solid #10b981;">'
+        '<b style="color:#fff;">Use incentives to bridge valuation gaps.</b> '
+        'When you and the player disagree on their value, '
+        'a lower guaranteed base plus meaningful upside bonuses lets both sides '
+        'bet on the outcome they believe in — without either side overpaying upfront.'
+        '</div>'
+
+        '<div style="color:#9aa5b4;font-size:0.88rem;line-height:1.7;padding-left:14px;'
+        'border-left:2px solid #ef4444;">'
+        '<b style="color:#fff;">Never commit 3 years to a rotation player.</b> '
+        'The ceiling is defined. Locking up a 15–20 min/game contributor through '
+        'their entire eligibility forecloses upgrading that slot if something '
+        'better comes through the portal.'
+        '</div>'
+
+        '<div style="color:#9aa5b4;font-size:0.88rem;line-height:1.7;padding-left:14px;'
+        'border-left:2px solid #2774AE;">'
+        '<b style="color:#fff;">Multi-year security wins bidding wars at lower AAV.</b> '
+        'A player choosing between a $900K one-year offer and a '
+        '$800K/yr two-year deal often takes the security. '
+        'Guaranteed future earnings are worth real money to players — '
+        'which means you can pay less annually while offering more total value.'
+        '</div>'
+
+        '<div style="color:#9aa5b4;font-size:0.88rem;line-height:1.7;padding-left:14px;'
+        'border-left:2px solid #FFB300;">'
+        '<b style="color:#fff;">Structure is leverage.</b> '
+        'A program that thinks carefully about contract duration, '
+        'escalator rates, and incentive triggers is playing a different game '
+        'than one that just matches the highest offer. '
+        'At $6.2M you can\'t outspend Kentucky — but you can out-structure them.'
+        '</div>'
+
+        '</div>',
+        extra_style="padding:1.6rem;",
     )
 
 
