@@ -1,0 +1,13 @@
+[theme]
+primaryColor = "#2774AE"          # UCLA Blue
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F8F8F8"
+textColor = "#003B5C"             # UCLA Dark Blue
+font = "sans serif"
+
+[server]
+headless = true
+port = 8501
+
+[browser]
+gatherUsageStats = false
